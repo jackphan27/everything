@@ -18,7 +18,7 @@
   *Done when:* all three show 0.3.0; CHANGELOG lists v0.1–v0.3 features.
 - [x] **T0.3.2** Move the Playwright e2e scripts (mocked backend) into `tests/e2e` with fixtures in `tests/fixtures`; `npm run test:e2e`. (2026-09-28, ba384f0)
   *Done when:* the CSV/AI, map-layers, GeoJSON-variants and basemap tests pass locally from a clean checkout.
-- [ ] **T0.3.3** Add `vitest` with first unit tests (type inference, JSON parsing, join key normalisation).
+- [x] **T0.3.3** Add `vitest` with first unit tests (type inference, JSON parsing, join key normalisation). (2026-09-28, 5045523)
   *Done when:* `npm test` passes with at least 10 tests.
 - [ ] **T0.3.4** Rust tests in the crate (`tiles`, `basemap`, AI header building); `cargo test` works on Linux (feature-gate Windows-only bits if needed).
   *Done when:* `cargo test` passes.

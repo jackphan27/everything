@@ -319,6 +319,7 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_http::{serve, Canned};
 
     #[test]
     fn parses_tile_paths() {
@@ -327,5 +328,67 @@ mod tests {
         assert_eq!(parse_zxy("/3/8/5"), None); // x out of range at z=3
         assert_eq!(parse_zxy("/../etc/passwd"), None);
         assert_eq!(parse_zxy("/1/0/0/extra"), None);
+        assert_eq!(parse_zxy("/25/0/0"), None);
+    }
+
+    #[test]
+    fn fills_url_templates() {
+        assert_eq!(tile_url("https://t/{z}/{x}/{y}.png", 5, 25, 16), "https://t/5/25/16.png");
+        assert_eq!(tile_url("https://{s}.t/{z}/{x}/{y}{r}.png", 1, 1, 1), "https://c.t/1/1/1.png");
+    }
+
+    #[test]
+    fn cache_folder_differs_per_server() {
+        assert_ne!(source_key("https://a/{z}/{x}/{y}"), source_key("https://b/{z}/{x}/{y}"));
+        assert_eq!(source_key("x").len(), 16);
+    }
+
+    #[test]
+    fn sniffs_image_types() {
+        assert_eq!(sniff_type(&crate::basemap::render_tile(0, 0, 0)), "image/png");
+        assert_eq!(sniff_type(&[0xFF, 0xD8, 0xFF]), "image/jpeg");
+        assert_eq!(sniff_type(b"RIFF\0\0\0\0WEBPVP8"), "image/webp");
+        assert_eq!(sniff_type(b"<html>"), "application/octet-stream");
+    }
+
+    fn with_headers(headers: Vec<HeaderEntry>) -> MapSettings {
+        MapSettings { mode: TileMode::Online, headers, ..Default::default() }
+    }
+
+    #[test]
+    fn fetch_sends_custom_headers_and_user_agent() {
+        let png = crate::basemap::render_tile(1, 0, 0);
+        let srv = serve(Canned { status: 200, content_type: "image/png", body: png.clone() });
+        let client = build_client(&with_headers(vec![HeaderEntry { name: "X-Key".into(), value: "k1".into() }])).unwrap();
+        let got = tauri::async_runtime::block_on(fetch(&client, &format!("{}/1/0/0.png", srv.base))).unwrap();
+        assert_eq!(got, png);
+        let req = srv.requests.lock().unwrap()[0].to_ascii_lowercase();
+        assert!(req.starts_with("get /1/0/0.png "));
+        assert!(req.contains("x-key: k1"));
+        assert!(req.contains("user-agent: graphicwalkerdesktop/"));
+    }
+
+    #[test]
+    fn fetch_rejects_errors_and_non_images() {
+        let client = build_client(&MapSettings::default()).unwrap();
+        let srv = serve(Canned { status: 403, content_type: "text/plain", body: b"blocked by policy".to_vec() });
+        let err = tauri::async_runtime::block_on(fetch(&client, &format!("{}/0/0/0", srv.base))).unwrap_err();
+        assert!(err.contains("403") && err.contains("blocked by policy"), "{err}");
+        let srv = serve(Canned { status: 200, content_type: "text/html", body: b"<html>login</html>".to_vec() });
+        let err = tauri::async_runtime::block_on(fetch(&client, &format!("{}/0/0/0", srv.base))).unwrap_err();
+        assert!(err.contains("did not return an image"), "{err}");
+    }
+
+    #[test]
+    fn rejects_invalid_header_names() {
+        assert!(build_client(&with_headers(vec![HeaderEntry { name: "a b".into(), value: "v".into() }])).is_err());
+    }
+
+    #[test]
+    fn settings_json_uses_defaults_for_missing_fields() {
+        let s: MapSettings = serde_json::from_str(r#"{"mode":"online"}"#).unwrap();
+        assert!(matches!(s.mode, TileMode::Online));
+        assert!(s.verify_ssl);
+        assert!(s.url_template.contains("{z}"));
     }
 }

@@ -262,3 +262,129 @@ fn truncate(s: &str, max: usize) -> &str {
         None => s,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_http::{serve, Canned};
+
+    fn settings(style: ApiStyle, base: &str) -> AiSettings {
+        AiSettings { enabled: true, api_style: style, base_url: base.into(), model: "m1".into(), ..Default::default() }
+    }
+
+    fn msgs() -> Vec<ChatMsg> {
+        vec![
+            ChatMsg { role: "system".into(), content: "be brief".into() },
+            ChatMsg { role: "user".into(), content: "Fields:\n- Sales".into() },
+        ]
+    }
+
+    #[test]
+    fn endpoint_appends_suffix_once() {
+        assert_eq!(endpoint("https://llm.local/v1/", "/chat/completions").unwrap(), "https://llm.local/v1/chat/completions");
+        assert_eq!(endpoint(" https://llm.local/v1/chat/completions ", "/chat/completions").unwrap(), "https://llm.local/v1/chat/completions");
+        assert!(endpoint("llm.local/v1", "/messages").is_err());
+    }
+
+    #[test]
+    fn headers_key_prefix_and_custom_overrides() {
+        let mut s = settings(ApiStyle::Openai, "https://x");
+        s.headers = vec![
+            HeaderEntry { name: "X-Tenant".into(), value: "acme".into() },
+            HeaderEntry { name: " ".into(), value: "ignored".into() },
+        ];
+        let h = build_headers(&s, Some("sk-1")).unwrap();
+        assert_eq!(h["authorization"], "Bearer sk-1");
+        assert!(h["authorization"].is_sensitive());
+        assert_eq!(h["x-tenant"], "acme");
+        assert_eq!(h.len(), 2);
+
+        // A custom header can replace the default auth header.
+        s.headers = vec![HeaderEntry { name: "Authorization".into(), value: "Basic abc".into() }];
+        assert_eq!(build_headers(&s, Some("sk-1")).unwrap()["authorization"], "Basic abc");
+    }
+
+    #[test]
+    fn headers_custom_key_header_and_anthropic_version() {
+        let mut s = settings(ApiStyle::Anthropic, "https://x");
+        s.auth_header = "x-api-key".into();
+        s.auth_prefix = String::new();
+        let h = build_headers(&s, Some("k")).unwrap();
+        assert_eq!(h["x-api-key"], "k");
+        assert!(h["x-api-key"].is_sensitive());
+        assert_eq!(h["anthropic-version"], "2023-06-01");
+
+        // No auth header configured: the key is not sent at all.
+        s.auth_header = String::new();
+        assert!(build_headers(&s, Some("k")).unwrap().get("x-api-key").is_none());
+    }
+
+    #[test]
+    fn headers_reject_invalid_names_and_values() {
+        let mut s = settings(ApiStyle::Openai, "https://x");
+        s.headers = vec![HeaderEntry { name: "bad name".into(), value: "v".into() }];
+        assert!(build_headers(&s, None).unwrap_err().contains("Invalid header name"));
+        s.headers = vec![HeaderEntry { name: "X-A".into(), value: "line\nbreak".into() }];
+        assert!(build_headers(&s, None).unwrap_err().contains("Invalid value"));
+    }
+
+    #[test]
+    fn extracts_text_from_both_formats() {
+        let o = settings(ApiStyle::Openai, "");
+        assert_eq!(extract_text(&o, &json!({"choices":[{"message":{"content":"hi"}}]})).as_deref(), Some("hi"));
+        assert_eq!(
+            extract_text(&o, &json!({"choices":[{"message":{"content":[{"text":"a"},{"text":"b"}]}}]})).as_deref(),
+            Some("ab")
+        );
+        assert_eq!(extract_text(&o, &json!({"choices":[]})), None);
+        let a = settings(ApiStyle::Anthropic, "");
+        assert_eq!(extract_text(&a, &json!({"content":[{"type":"text","text":"{}"}]})).as_deref(), Some("{}"));
+        assert_eq!(extract_text(&a, &json!({"content":[]})), None);
+    }
+
+    #[test]
+    fn truncates_on_char_boundaries() {
+        assert_eq!(truncate("héllo", 2), "hé");
+        assert_eq!(truncate("hi", 10), "hi");
+    }
+
+    #[test]
+    fn openai_request_carries_headers_and_messages() {
+        let srv = serve(Canned { status: 200, content_type: "application/json", body: br#"{"choices":[{"message":{"content":"{\"mark\":\"bar\"}"}}]}"#.to_vec() });
+        let mut s = settings(ApiStyle::Openai, &format!("{}/v1", srv.base));
+        s.headers = vec![HeaderEntry { name: "X-Gateway".into(), value: "corp".into() }];
+        let out = tauri::async_runtime::block_on(complete(&s, Some("sk-9"), &msgs())).unwrap();
+        assert_eq!(out, r#"{"mark":"bar"}"#);
+        let req = srv.requests.lock().unwrap()[0].to_ascii_lowercase();
+        assert!(req.starts_with("post /v1/chat/completions "), "{req}");
+        assert!(req.contains("authorization: bearer sk-9"));
+        assert!(req.contains("x-gateway: corp"));
+        assert!(req.contains(r#""model":"m1""#) && req.contains("fields:\\n- sales"));
+    }
+
+    #[test]
+    fn anthropic_request_moves_system_prompt() {
+        let srv = serve(Canned { status: 200, content_type: "application/json", body: br#"{"content":[{"type":"text","text":"ok"}]}"#.to_vec() });
+        let s = settings(ApiStyle::Anthropic, &srv.base);
+        assert_eq!(tauri::async_runtime::block_on(complete(&s, Some("k"), &msgs())).unwrap(), "ok");
+        let req = srv.requests.lock().unwrap()[0].clone();
+        assert!(req.starts_with("POST /messages "), "{req}");
+        assert!(req.contains(r#""system":"be brief""#));
+        assert!(!req.contains(r#""role":"system""#));
+    }
+
+    #[test]
+    fn http_errors_are_reported_with_status_and_body() {
+        let srv = serve(Canned { status: 401, content_type: "application/json", body: br#"{"error":"bad key"}"#.to_vec() });
+        let s = settings(ApiStyle::Openai, &srv.base);
+        let err = tauri::async_runtime::block_on(complete(&s, Some("k"), &msgs())).unwrap_err();
+        assert!(err.contains("401") && err.contains("bad key"), "{err}");
+    }
+
+    #[test]
+    fn missing_model_is_reported_before_any_request() {
+        let mut s = settings(ApiStyle::Openai, "https://unreachable.invalid");
+        s.model = " ".into();
+        assert!(tauri::async_runtime::block_on(complete(&s, None, &msgs())).unwrap_err().contains("model"));
+    }
+}

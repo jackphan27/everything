@@ -1,6 +1,8 @@
 mod ai;
 mod basemap;
 mod tiles;
+#[cfg(test)]
+mod test_http;
 
 use tauri::Manager;
 
