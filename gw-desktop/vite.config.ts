@@ -3,11 +3,13 @@ import react from '@vitejs/plugin-react';
 
 const LEAFLET_CDN = /"https:\/\/unpkg\.com\/leaflet@[\d.]+\/dist\/leaflet\.css",\s*integrity:\s*"[^"]*",\s*crossOrigin:\s*""/;
 const KANARIES_LOGO_CDN = /"https:\/\/imagedelivery\.net\/[^"]+"/;
+const OSM_TILES = /"https:\/\/\{s\}\.tile\.openstreetmap\.org\/\{z\}\/\{x\}\/\{y\}\.png"/g;
 
 /**
- * Graphic Walker hard-codes two CDN URLs (leaflet.css from unpkg, a logo image).
- * Rewrite them at build time so the app never attempts a network request:
- * leaflet.css is bundled locally; the logo falls back to its bundled copy.
+ * Graphic Walker hard-codes CDN URLs (leaflet.css from unpkg, a logo image, OSM tiles).
+ * Rewrite them at build time so the webview never attempts a network request:
+ * leaflet.css is bundled locally, the logo falls back to its bundled copy, and map
+ * tiles go through the app's local tile proxy (`globalThis.__gwTileUrl`, see src/tiles.ts).
  */
 function keepGraphicWalkerOffline(): Plugin {
   return {
@@ -15,11 +17,14 @@ function keepGraphicWalkerOffline(): Plugin {
     enforce: 'pre',
     transform(code, id) {
       if (!id.includes('@kanaries/graphic-walker/dist/')) return null;
-      if (!LEAFLET_CDN.test(code) && !KANARIES_LOGO_CDN.test(code)) return null;
+      if (!LEAFLET_CDN.test(code) && !KANARIES_LOGO_CDN.test(code) && !code.includes('tile.openstreetmap.org')) return null;
       return {
         code:
           `import __gwLeafletCss from 'leaflet/dist/leaflet.css?url';\n` +
-          code.replace(LEAFLET_CDN, '__gwLeafletCss').replace(KANARIES_LOGO_CDN, '""'),
+          code
+            .replace(LEAFLET_CDN, '__gwLeafletCss')
+            .replace(KANARIES_LOGO_CDN, '""')
+            .replace(OSM_TILES, '(globalThis.__gwTileUrl ?? "")'),
         map: null,
       };
     },

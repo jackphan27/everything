@@ -20,8 +20,8 @@ pub enum ApiStyle {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct HeaderEntry {
-    name: String,
-    value: String,
+    pub(crate) name: String,
+    pub(crate) value: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

@@ -24,15 +24,17 @@
       }
     ],
     "security": {
-      "dangerousDisableAssetCspModification": ["style-src"],
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ],
       "csp": {
         "default-src": "'self'",
         "script-src": "'self' 'unsafe-eval'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data: blob:",
+        "img-src": "'self' data: blob: tiles: http://tiles.localhost",
         "font-src": "'self' data:",
         "worker-src": "'self' blob: data:",
-        "connect-src": "ipc: http://ipc.localhost 'self' data: blob:",
+        "connect-src": "ipc: http://ipc.localhost 'self' data: blob: tiles: http://tiles.localhost",
         "object-src": "'none'",
         "frame-src": "'none'"
       }
@@ -40,7 +42,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -48,7 +52,9 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "webviewInstallMode": { "type": "skip" },
+      "webviewInstallMode": {
+        "type": "skip"
+      },
       "nsis": {
         "installMode": "currentUser",
         "compression": "lzma"
