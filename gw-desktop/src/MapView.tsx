@@ -82,7 +82,17 @@ export default function MapView({ datasets, layers, onLayersChange, tiles, onTil
     map.current = m;
     const ro = new ResizeObserver(() => m.invalidateSize());
     ro.observe(el.current);
-    return () => { ro.disconnect(); m.remove(); map.current = null; };
+    // React runs this cleanup before the layer cleanups below; they skip a removed map
+    // (map.remove() already drops its layers, and removing them again throws in Leaflet).
+    return () => {
+      ro.disconnect();
+      m.stop();
+      // Leaflet 1.9 finishes a zoom animation in a 250 ms timer that remove() doesn't cancel;
+      // it then reads the removed map pane and throws. The timer exits early when this is false.
+      (m as unknown as { _animatingZoom: boolean })._animatingZoom = false;
+      m.remove();
+      map.current = null;
+    };
   }, []);
 
   // Basemap through the local tile proxy.
@@ -92,7 +102,7 @@ export default function MapView({ datasets, layers, onLayersChange, tiles, onTil
     const m = map.current;
     if (!m || !tileUrl) return;
     const layer = L.tileLayer(tileUrl, { maxZoom: 19, attribution: escapeHtml(attribution) }).addTo(m);
-    return () => { layer.remove(); };
+    return () => { if (map.current === m) layer.remove(); };
   }, [tileUrl, attribution]);
 
   // Overlay layers. Each gets its own pane + canvas renderer so stacking order is exact
@@ -128,7 +138,7 @@ export default function MapView({ datasets, layers, onLayersChange, tiles, onTil
       layer.addTo(m);
       added.push(layer, renderer);
     });
-    return () => { for (const l of added) l.remove(); };
+    return () => { if (map.current === m) for (const l of added) l.remove(); };
   }, [resolved]);
 
   const zoomTo = (rs: Resolved[]) => {

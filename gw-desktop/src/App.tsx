@@ -37,8 +37,13 @@ export default function App() {
   useEffect(() => {
     getSettings().then((v) => setAiEnabled(v.settings.enabled)).catch(() => {});
     getMapSettings().then(applyTiles).catch(() => {});
-    const id = requestIdleCallback(prefetchWalker, { timeout: 1500 });
-    return () => cancelIdleCallback(id);
+    // WebView2 has requestIdleCallback; WebKit (Linux/macOS webviews) does not.
+    if (typeof requestIdleCallback === 'function') {
+      const id = requestIdleCallback(prefetchWalker, { timeout: 1500 });
+      return () => cancelIdleCallback(id);
+    }
+    const t = setTimeout(prefetchWalker, 500);
+    return () => clearTimeout(t);
   }, [applyTiles]);
 
   const open = useCallback(async (files?: FileList | File[] | null) => {

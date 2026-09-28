@@ -55,3 +55,20 @@ test('multi-layer map: shapefile, points and lines, joined colours, basemap off'
   await expect.poll(() => h.tiles.length, { timeout: 15_000 }).toBeGreaterThan(before);
   expectClean(h);
 });
+
+test('switching views while the map is zooming does not throw', async ({ h }) => {
+  const { page } = h;
+  await h.mock({ tileMode: 'builtin', aiEnabled: false });
+  await page.goto('/');
+  await h.addFiles(geo('kecamatan.zip'), geo('poi.csv'), geo('roads.geojson'));
+  const mapTab = page.getByRole('tab', { name: 'Map layers' });
+  const exploreTab = page.getByRole('tab', { name: 'Explore' });
+  for (let i = 0; i < 6; i++) {
+    await mapTab.click();
+    await expect(page.locator('.leaflet-container')).toBeVisible();
+    await page.locator('.leaflet-control-zoom-in').click(); // starts a 250 ms zoom animation
+    await exploreTab.click(); // unmount the map mid-animation
+    await page.waitForTimeout(300 + i * 20);
+  }
+  expectClean(h);
+});

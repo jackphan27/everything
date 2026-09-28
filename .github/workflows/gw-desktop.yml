@@ -53,7 +53,7 @@ jobs:
         working-directory: gw-desktop/src-tauri
         run: cargo test
 
-  # Windows release build: Rust tests on Windows, portable exe and NSIS installer.
+  # Windows release build: Rust tests on Windows, real-exe smoke test, portable exe and NSIS installer.
   windows:
     runs-on: windows-latest
     defaults:
@@ -76,6 +76,29 @@ jobs:
       - name: Rust tests (Windows)
         working-directory: gw-desktop/src-tauri
         run: cargo test
+      - name: Install tauri-driver and msedgedriver
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\edgedriver" | Out-Null
+          Push-Location "$env:RUNNER_TEMP\edgedriver"
+          & "$HOME\.cargo\bin\msedgedriver-tool.exe"
+          Pop-Location
+          "$env:RUNNER_TEMP\edgedriver" >> $env:GITHUB_PATH
+      - name: Self-signed certificate for the AI mock
+        shell: bash
+        run: |
+          MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+            -keyout "$RUNNER_TEMP/key.pem" -out "$RUNNER_TEMP/cert.pem" -subj "/CN=smoke.local"
+      - name: Smoke test (real exe via tauri-driver)
+        shell: bash
+        run: node tests/smoke/smoke.mjs src-tauri/target/release/gw-desktop.exe "$RUNNER_TEMP/cert.pem" "$RUNNER_TEMP/key.pem"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-results
+          path: gw-desktop/smoke-results
       - name: Report size
         shell: pwsh
         run: |

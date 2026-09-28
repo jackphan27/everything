@@ -8,10 +8,13 @@ All notable changes to Graphic Walker Desktop. Versions follow the roadmap in [P
 - Tile modes: built-in, online (fetch + disk cache + fallback, 60 s offline backoff), cached-only, off.
 - Robust JSON/GeoJSON reading: UTF-8 BOM, UTF-16 LE/BE (with or without BOM), pretty-printed GeoJSON, JSONL and GeoJSONSeq; clearer error messages with a snippet.
 - Product plan (`PLAN.md`) and task list (`TASK.md`).
+- Automated tests: vitest unit tests, Playwright e2e tests (mocked backend, no external requests allowed), Rust tests, and a real-exe smoke test on Windows (tauri-driver) covering CSV load, an AI chart over HTTPS with SSL verification off, and the built-in basemap. CI runs all of them.
 
 ### Fixed
 - Pretty-printed GeoJSON was misread as JSON Lines ("Expected property name or '}' at position 1").
 - Map stayed blank because the CSP blocked the OSM tile server.
+- Leaving the Map layers view while the map was zooming threw an error (Leaflet timer after the map was removed).
+- The UI failed to start in WebKit-based webviews (no `requestIdleCallback`).
 
 ## 0.2.0 — Geo data and map layers
 ### Added

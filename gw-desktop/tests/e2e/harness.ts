@@ -109,7 +109,7 @@ export const test = base.extend<{ h: Harness }>({
         return (await page.locator('header select').first().locator('option').allTextContents()).sort();
       },
     };
-    page.on('pageerror', (e) => h.errors.push(String(e)));
+    page.on('pageerror', (e) => h.errors.push(e.stack?.split('\n').slice(0, 6).join('\n') ?? String(e)));
     page.on('console', (m) => { if (m.type() === 'error') h.errors.push(m.text()); });
     page.on('request', (r) => {
       const u = new URL(r.url());
