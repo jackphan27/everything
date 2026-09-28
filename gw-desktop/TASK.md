@@ -22,9 +22,9 @@
   *Done when:* `npm test` passes with at least 10 tests.
 - [x] **T0.3.4** Rust tests in the crate (`tiles`, `basemap`, AI header building); `cargo test` works on Linux (feature-gate Windows-only bits if needed). (2026-09-28, f5e4a2b)
   *Done when:* `cargo test` passes.
-- [ ] **T0.3.5** CI: run typecheck, unit, e2e and cargo tests plus the Windows build on every push; upload the installer artifact.
+- [x] **T0.3.5** CI: run typecheck, unit, e2e and cargo tests plus the Windows build on every push; upload the installer artifact. (2026-09-28, 91bc7ae)
   *Done when:* the workflow is green on the branch and the artifact downloads.
-- [ ] **T0.3.6** Real-exe smoke test on the Windows runner (tauri-driver): app starts, loads a CSV, a chart renders, the basemap tile endpoint returns a PNG.
+- [x] **T0.3.6** Real-exe smoke test on the Windows runner (tauri-driver): app starts, loads a CSV, a chart renders, the basemap tile endpoint returns a PNG. (2026-09-28, 91bc7ae; msedgedriver attaches via a debugging port because Tauri keeps the WebView2 profile outside the default folder)
   *Done when:* the CI job passes.
 - [ ] **T0.3.7** Open PR to `main` with the user checklist; after approval, merge and tag `v0.3.0`.
   *Done when:* merged and tagged.
