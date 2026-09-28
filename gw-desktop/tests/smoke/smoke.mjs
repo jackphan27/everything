@@ -46,27 +46,37 @@ const aiSettings = {
 };
 fs.writeFileSync(path.join(configDir, 'ai-settings.json'), JSON.stringify(aiSettings));
 
-// 3. The exe must start and stay up on its own (rules out a crash at startup).
-{
-  const app = spawn(path.resolve(exe), [], { stdio: 'ignore' });
+// 3. WebDriver session.
+// Windows: msedgedriver normally launches the app and waits for a DevToolsActivePort file in
+// WebView2's default profile folder, but Tauri keeps the profile in its own app-data folder, so
+// the driver never finds it. Instead we start the app with a fixed debugging port (the app
+// appends its own switches to this variable) and let msedgedriver attach to it.
+// Linux: tauri-driver + WebKitWebDriver launch the app themselves.
+const win = process.platform === 'win32';
+const DEBUG_PORT = 9222;
+let app;
+if (win) {
+  app = spawn(path.resolve(exe), [], {
+    stdio: 'ignore',
+    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${DEBUG_PORT}` },
+  });
   let exit = null;
   app.on('exit', (code) => (exit = code));
-  await new Promise((r) => setTimeout(r, 5000));
-  if (exit !== null) throw new Error(`the app exited on its own with code ${exit}`);
-  app.kill();
-  await new Promise((r) => setTimeout(r, 1000));
-  log('app starts and stays running');
+  const t = Date.now();
+  for (;;) {
+    if (exit !== null) throw new Error(`the app exited on its own with code ${exit}`);
+    try { if ((await fetch(`http://127.0.0.1:${DEBUG_PORT}/json/version`)).ok) break; } catch {}
+    if (Date.now() - t > 30_000) throw new Error('the WebView2 debugging port never opened');
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  log('app started; WebView2 debugging port open after', Date.now() - t, 'ms');
 }
-
-// 4. WebDriver session. On Windows talk to msedgedriver directly (what tauri-driver wraps),
-// with a verbose log kept for diagnosis; elsewhere use tauri-driver (WebKitWebDriver).
-const win = process.platform === 'win32';
 const driver = win
   ? spawn('msedgedriver', ['--port=4444', '--verbose', `--log-path=${path.join(outDir, 'msedgedriver.log')}`], { stdio: 'inherit' })
   : spawn('tauri-driver', [], { stdio: 'inherit' });
 const WD = 'http://127.0.0.1:4444';
 const capabilities = win
-  ? { browserName: 'webview2', 'ms:edgeOptions': { binary: path.resolve(exe), args: [], webviewOptions: {} } }
+  ? { browserName: 'webview2', 'ms:edgeOptions': { debuggerAddress: `127.0.0.1:${DEBUG_PORT}` } }
   : { 'tauri:options': { application: path.resolve(exe) } };
 async function wd(method, url, body) {
   const r = await fetch(WD + url, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
@@ -162,6 +172,7 @@ try {
   fs.writeFileSync(path.join(outDir, 'results.json'), JSON.stringify(results, null, 2));
   if (sid) await wd('DELETE', `/session/${sid}`).catch(() => {});
   driver.kill();
+  app?.kill();
   server.close();
 }
 process.exit(results.ok ? 0 : 1);
