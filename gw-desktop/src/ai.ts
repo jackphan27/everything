@@ -37,7 +37,7 @@ function toMutFields(metas: IViewField[]): IMutField[] {
     .map((m) => ({ fid: m.fid, name: m.name, semanticType: m.semanticType, analyticType: m.analyticType }));
 }
 
-function extractJson(text: string): object {
+export function extractJson(text: string): object {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const body = fenced ? fenced[1] : text;
   const start = body.indexOf('{');
@@ -46,7 +46,7 @@ function extractJson(text: string): object {
   return JSON.parse(body.slice(start, end + 1));
 }
 
-function toChart(reply: string, metas: IViewField[]): IChart {
+export function toChart(reply: string, metas: IViewField[]): IChart {
   // Models often write SQL-style count(*); terse spells the row count as count().
   const spec = extractJson(reply.replace(/count\(\s*\*\s*\)/gi, 'count()')) as Record<string, unknown>;
   // Force terse detection even if the model omits x/y (e.g. pie charts).

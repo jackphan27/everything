@@ -80,8 +80,7 @@ function geoDataset(name: string, fc: FeatureCollection, source?: Blob): Dataset
 }
 
 /** Decode text honouring a BOM, and detect BOM-less UTF-16 (common from Windows tools). */
-async function readText(file: File): Promise<string> {
-  const buf = new Uint8Array(await file.arrayBuffer());
+export function decodeText(buf: Uint8Array): string {
   let enc = 'utf-8';
   if (buf[0] === 0xff && buf[1] === 0xfe) enc = 'utf-16le';
   else if (buf[0] === 0xfe && buf[1] === 0xff) enc = 'utf-16be';
@@ -89,6 +88,10 @@ async function readText(file: File): Promise<string> {
   else if (buf.length > 1 && buf[0] === 0 && buf[1] !== 0) enc = 'utf-16be';
   // TextDecoder strips a leading BOM by default.
   return new TextDecoder(enc).decode(buf);
+}
+
+async function readText(file: File): Promise<string> {
+  return decodeText(new Uint8Array(await file.arrayBuffer()));
 }
 
 function describeJsonError(text: string, err: unknown): Error {
@@ -100,8 +103,13 @@ function describeJsonError(text: string, err: unknown): Error {
 }
 
 async function parseJsonFile(file: File): Promise<Dataset> {
+  return parseJsonText(file.name, await readText(file), file);
+}
+
+/** Parse JSON, GeoJSON, JSON Lines or GeoJSONSeq text into a dataset. */
+export function parseJsonText(name: string, raw: string, source?: Blob): Dataset {
   // GeoJSON Text Sequences (RFC 8142) separate records with the RS character.
-  const text = (await readText(file)).replace(/\u001e/g, '\n');
+  const text = raw.replace(/\u001e/g, '\n');
   let json: any;
   try {
     // Always try a single JSON document first: pretty-printed GeoJSON has many lines starting with "{".
@@ -115,19 +123,19 @@ async function parseJsonFile(file: File): Promise<Dataset> {
     }
     if (!records) throw describeJsonError(text, err);
     if (records.every((r) => r?.type === 'Feature')) {
-      return geoDataset(file.name, { type: 'FeatureCollection', features: records });
+      return geoDataset(name, { type: 'FeatureCollection', features: records });
     }
-    return tableDataset(file.name, records);
+    return tableDataset(name, records);
   }
-  if (isFeatureCollectionLike(json)) return geoDataset(file.name, toFeatureCollection(json), file);
+  if (isFeatureCollectionLike(json)) return geoDataset(name, toFeatureCollection(json), source);
   if (Array.isArray(json)) {
     if (json.length && json.every((r) => r?.type === 'Feature')) {
-      return geoDataset(file.name, { type: 'FeatureCollection', features: json });
+      return geoDataset(name, { type: 'FeatureCollection', features: json });
     }
-    return tableDataset(file.name, json);
+    return tableDataset(name, json);
   }
   // Common wrappers: { data: [...] } / { rows: [...] } / { records: [...] }
-  for (const k of ['data', 'rows', 'records', 'items']) if (Array.isArray(json?.[k])) return tableDataset(file.name, json[k]);
+  for (const k of ['data', 'rows', 'records', 'items']) if (Array.isArray(json?.[k])) return tableDataset(name, json[k]);
   throw new Error('JSON must be GeoJSON or an array of objects (or { "data": [...] }).');
 }
 

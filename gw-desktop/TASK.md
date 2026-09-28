@@ -16,7 +16,7 @@
 ## v0.3: Baseline release
 - [x] **T0.3.1** Version bump to 0.3.0 in package.json, Cargo.toml, tauri.conf.json; add CHANGELOG.md. (2026-09-28, 7a25ff8)
   *Done when:* all three show 0.3.0; CHANGELOG lists v0.1–v0.3 features.
-- [ ] **T0.3.2** Move the Playwright e2e scripts (mocked backend) into `tests/e2e` with fixtures in `tests/fixtures`; `npm run test:e2e`.
+- [x] **T0.3.2** Move the Playwright e2e scripts (mocked backend) into `tests/e2e` with fixtures in `tests/fixtures`; `npm run test:e2e`. (2026-09-28, ba384f0)
   *Done when:* the CSV/AI, map-layers, GeoJSON-variants and basemap tests pass locally from a clean checkout.
 - [ ] **T0.3.3** Add `vitest` with first unit tests (type inference, JSON parsing, join key normalisation).
   *Done when:* `npm test` passes with at least 10 tests.
