@@ -15,6 +15,7 @@ All notable changes to Graphic Walker Desktop. Versions follow the roadmap in [P
 - Map stayed blank because the CSP blocked the OSM tile server.
 - Leaving the Map layers view while the map was zooming threw an error (Leaflet timer after the map was removed).
 - The UI failed to start in WebKit-based webviews (no `requestIdleCallback`).
+- WebView2 privacy switches (no background networking, pings or component updates) are now applied by the main window at runtime and can be combined with switches from `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`.
 
 ## 0.2.0 — Geo data and map layers
 ### Added
