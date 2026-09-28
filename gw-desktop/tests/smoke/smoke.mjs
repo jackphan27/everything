@@ -4,7 +4,8 @@
 // and the built-in basemap endpoint returns a PNG.
 //
 // Usage: node tests/smoke/smoke.mjs <path to gw-desktop.exe> <cert.pem> <key.pem>
-// Needs tauri-driver on PATH and a matching msedgedriver (see .github/workflows/gw-desktop.yml).
+// Needs msedgedriver matching the WebView2 runtime on PATH (Windows) or tauri-driver + WebKitWebDriver
+// (Linux); see .github/workflows/gw-desktop.yml.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import https from 'node:https';
@@ -45,9 +46,28 @@ const aiSettings = {
 };
 fs.writeFileSync(path.join(configDir, 'ai-settings.json'), JSON.stringify(aiSettings));
 
-// 3. WebDriver session through tauri-driver.
-const driver = spawn('tauri-driver', [], { stdio: 'inherit' });
+// 3. The exe must start and stay up on its own (rules out a crash at startup).
+{
+  const app = spawn(path.resolve(exe), [], { stdio: 'ignore' });
+  let exit = null;
+  app.on('exit', (code) => (exit = code));
+  await new Promise((r) => setTimeout(r, 5000));
+  if (exit !== null) throw new Error(`the app exited on its own with code ${exit}`);
+  app.kill();
+  await new Promise((r) => setTimeout(r, 1000));
+  log('app starts and stays running');
+}
+
+// 4. WebDriver session. On Windows talk to msedgedriver directly (what tauri-driver wraps),
+// with a verbose log kept for diagnosis; elsewhere use tauri-driver (WebKitWebDriver).
+const win = process.platform === 'win32';
+const driver = win
+  ? spawn('msedgedriver', ['--port=4444', '--verbose', `--log-path=${path.join(outDir, 'msedgedriver.log')}`], { stdio: 'inherit' })
+  : spawn('tauri-driver', [], { stdio: 'inherit' });
 const WD = 'http://127.0.0.1:4444';
+const capabilities = win
+  ? { browserName: 'webview2', 'ms:edgeOptions': { binary: path.resolve(exe), args: [], webviewOptions: {} } }
+  : { 'tauri:options': { application: path.resolve(exe) } };
 async function wd(method, url, body) {
   const r = await fetch(WD + url, { method, headers: { 'content-type': 'application/json' }, body: body && JSON.stringify(body) });
   const j = await r.json();
@@ -85,7 +105,7 @@ async function screenshot(name) {
 
 try {
   const t0 = Date.now();
-  sid = (await wd('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application: path.resolve(exe) } } } })).sessionId;
+  sid = (await wd('POST', '/session', { capabilities: { alwaysMatch: capabilities } })).sessionId;
   await waitFor('app shell', () => exists('.empty.drop'));
   results.startupMs = Date.now() - t0;
   log('app shell visible after', results.startupMs, 'ms');

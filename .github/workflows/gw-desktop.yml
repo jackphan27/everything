@@ -76,10 +76,9 @@ jobs:
       - name: Rust tests (Windows)
         working-directory: gw-desktop/src-tauri
         run: cargo test
-      - name: Install tauri-driver and msedgedriver
+      - name: Install msedgedriver matching the WebView2 runtime
         shell: pwsh
         run: |
-          cargo install tauri-driver --locked
           cargo install --git https://github.com/chippers/msedgedriver-tool
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\edgedriver" | Out-Null
           Push-Location "$env:RUNNER_TEMP\edgedriver"
@@ -91,7 +90,7 @@ jobs:
         run: |
           MSYS_NO_PATHCONV=1 openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
             -keyout "$RUNNER_TEMP/key.pem" -out "$RUNNER_TEMP/cert.pem" -subj "/CN=smoke.local"
-      - name: Smoke test (real exe via tauri-driver)
+      - name: Smoke test (real exe via WebDriver)
         shell: bash
         run: node tests/smoke/smoke.mjs src-tauri/target/release/gw-desktop.exe "$RUNNER_TEMP/cert.pem" "$RUNNER_TEMP/key.pem"
       - uses: actions/upload-artifact@v4
