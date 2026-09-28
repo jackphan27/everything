@@ -1,0 +1,32 @@
+name: gw-desktop (Windows build)
+
+on:
+  push:
+    paths: ['gw-desktop/**', '.github/workflows/gw-desktop-windows.yml']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: gw-desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gw-desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: gw-desktop/src-tauri
+      - run: npm ci
+      - run: npx tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gw-desktop-windows
+          path: |
+            gw-desktop/src-tauri/target/release/gw-desktop.exe
+            gw-desktop/src-tauri/target/release/bundle/nsis/*.exe
