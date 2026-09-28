@@ -7,6 +7,8 @@ export interface GeoData {
   kind: GeomKind;
   /** Features with `_fid` in their properties (matches the `_fid` column in rows). */
   collection: FeatureCollection;
+  /** The original GeoJSON file, reused for Graphic Walker's boundary list instead of re-serialising. */
+  source?: Blob;
 }
 
 export interface Dataset {
@@ -71,23 +73,59 @@ function tableDataset(name: string, rows: IRow[]): Dataset {
   return { id: newId(), name, rows, fields: inferFields(rows) };
 }
 
-function geoDataset(name: string, fc: FeatureCollection): Dataset {
+function geoDataset(name: string, fc: FeatureCollection, source?: Blob): Dataset {
   const { rows, collection, kind } = featuresToRows(fc);
   if (!rows.length) throw new Error(`${name} contains no features with geometry.`);
-  return { id: newId(), name, rows, fields: inferFields(rows), geo: { kind, collection } };
+  return { id: newId(), name, rows, fields: inferFields(rows), geo: { kind, collection, source } };
+}
+
+/** Decode text honouring a BOM, and detect BOM-less UTF-16 (common from Windows tools). */
+async function readText(file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let enc = 'utf-8';
+  if (buf[0] === 0xff && buf[1] === 0xfe) enc = 'utf-16le';
+  else if (buf[0] === 0xfe && buf[1] === 0xff) enc = 'utf-16be';
+  else if (buf.length > 1 && buf[0] !== 0 && buf[1] === 0) enc = 'utf-16le';
+  else if (buf.length > 1 && buf[0] === 0 && buf[1] !== 0) enc = 'utf-16be';
+  // TextDecoder strips a leading BOM by default.
+  return new TextDecoder(enc).decode(buf);
+}
+
+function describeJsonError(text: string, err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  const pos = Number(/position (\d+)/.exec(msg)?.[1]);
+  if (!Number.isFinite(pos)) return new Error(`Invalid JSON: ${msg}`);
+  const snippet = text.slice(Math.max(0, pos - 40), pos + 40).replace(/\s+/g, ' ');
+  return new Error(`Invalid JSON: ${msg}. Near: …${snippet}…`);
 }
 
 async function parseJsonFile(file: File): Promise<Dataset> {
-  const text = await file.text();
-  const trimmed = text.trimStart();
-  // JSON Lines / NDJSON
-  if (!trimmed.startsWith('[') && trimmed.includes('\n{')) {
-    const rows = trimmed.split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
-    return tableDataset(file.name, rows);
+  // GeoJSON Text Sequences (RFC 8142) separate records with the RS character.
+  const text = (await readText(file)).replace(/\u001e/g, '\n');
+  let json: any;
+  try {
+    // Always try a single JSON document first: pretty-printed GeoJSON has many lines starting with "{".
+    json = JSON.parse(text);
+  } catch (err) {
+    // Fall back to JSON Lines / NDJSON / GeoJSONSeq: one JSON value per line.
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    let records: any[] | null = null;
+    if (lines.length > 1) {
+      try { records = lines.map((l) => JSON.parse(l)); } catch { records = null; }
+    }
+    if (!records) throw describeJsonError(text, err);
+    if (records.every((r) => r?.type === 'Feature')) {
+      return geoDataset(file.name, { type: 'FeatureCollection', features: records });
+    }
+    return tableDataset(file.name, records);
   }
-  const json = JSON.parse(text);
-  if (isFeatureCollectionLike(json)) return geoDataset(file.name, toFeatureCollection(json));
-  if (Array.isArray(json)) return tableDataset(file.name, json);
+  if (isFeatureCollectionLike(json)) return geoDataset(file.name, toFeatureCollection(json), file);
+  if (Array.isArray(json)) {
+    if (json.length && json.every((r) => r?.type === 'Feature')) {
+      return geoDataset(file.name, { type: 'FeatureCollection', features: json });
+    }
+    return tableDataset(file.name, json);
+  }
   // Common wrappers: { data: [...] } / { rows: [...] } / { records: [...] }
   for (const k of ['data', 'rows', 'records', 'items']) if (Array.isArray(json?.[k])) return tableDataset(file.name, json[k]);
   throw new Error('JSON must be GeoJSON or an array of objects (or { "data": [...] }).');

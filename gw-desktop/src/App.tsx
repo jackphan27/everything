@@ -65,7 +65,8 @@ export default function App() {
     () => datasets.filter((d) => d.geo && d.geo.kind !== 'point').map((d) => ({
       type: 'GeoJSON',
       name: d.name,
-      url: URL.createObjectURL(new Blob([JSON.stringify(d.geo!.collection)], { type: 'application/geo+json' })),
+      // Reuse the original file when there is one: re-serialising a country-sized layer is slow.
+      url: URL.createObjectURL(d.geo!.source ?? new Blob([JSON.stringify(d.geo!.collection)], { type: 'application/geo+json' })),
     })),
     [datasets],
   );

@@ -9,7 +9,7 @@ import {
   type Agg, type ColorScale, type LayerConfig,
 } from './mapLayers';
 import type { MapSettingsView, TileMode } from './tiles';
-import { tileUrlFor } from './tiles';
+import { attributionFor, tileUrlFor } from './tiles';
 
 interface Props {
   datasets: Dataset[];
@@ -87,12 +87,13 @@ export default function MapView({ datasets, layers, onLayersChange, tiles, onTil
 
   // Basemap through the local tile proxy.
   const tileUrl = tiles ? tileUrlFor(tiles) : '';
+  const attribution = tiles ? attributionFor(tiles) : '';
   useEffect(() => {
     const m = map.current;
     if (!m || !tileUrl) return;
-    const layer = L.tileLayer(tileUrl, { maxZoom: 19, attribution: escapeHtml(tiles?.settings.attribution ?? '') }).addTo(m);
+    const layer = L.tileLayer(tileUrl, { maxZoom: 19, attribution: escapeHtml(attribution) }).addTo(m);
     return () => { layer.remove(); };
-  }, [tileUrl, tiles?.settings.attribution]);
+  }, [tileUrl, attribution]);
 
   // Overlay layers. Each gets its own pane + canvas renderer so stacking order is exact
   // (index 0 in the list is drawn on top) and thousands of features stay cheap to draw.
@@ -163,12 +164,13 @@ export default function MapView({ datasets, layers, onLayersChange, tiles, onTil
         </div>
         <label className="basemap">Basemap
           <span className="pair">
-            <select value={tiles?.settings.mode ?? 'online'} onChange={(e) => onTileModeChange(e.target.value as TileMode)}>
-              <option value="online">Online (cached on disk)</option>
-              <option value="cache">Offline — cached tiles only</option>
+            <select value={tiles?.settings.mode ?? 'builtin'} onChange={(e) => onTileModeChange(e.target.value as TileMode)}>
+              <option value="builtin">Built-in offline map</option>
+              <option value="online">Online tiles (cached, offline fallback)</option>
+              <option value="cache">Cached online tiles only</option>
               <option value="off">None</option>
             </select>
-            <button onClick={onOpenBasemapSettings} title="Tile server, SSL, proxy, cache">⚙</button>
+            <button onClick={onOpenBasemapSettings} title="Online tile server, SSL, proxy, cache">⚙</button>
           </span>
         </label>
 

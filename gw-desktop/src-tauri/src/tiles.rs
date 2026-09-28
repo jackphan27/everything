@@ -1,12 +1,16 @@
 //! Basemap tile proxy. The webview's CSP blocks every remote host, so map tiles are
-//! requested from the `tiles:` custom protocol and fetched here instead. Tiles are
-//! cached on disk, so areas you have viewed keep working offline, and "cache only"
-//! mode never touches the network.
+//! requested from the `tiles:` custom protocol and served here: from the built-in
+//! offline basemap (default), or fetched from a tile server and cached on disk.
+//! Whenever an online tile can't be fetched, the built-in basemap is served instead,
+//! so the map never goes blank.
 
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::RwLock,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        RwLock,
+    },
     time::Duration,
 };
 
@@ -17,14 +21,16 @@ use tauri::{
     AppHandle, Manager, State,
 };
 
-use crate::ai::HeaderEntry;
+use crate::{ai::HeaderEntry, basemap};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TileMode {
+    /// Built-in offline basemap rendered locally (no network).
+    Builtin,
     /// Fetch missing tiles from the tile server and cache them.
     Online,
-    /// Serve cached tiles only; never touch the network.
+    /// Serve cached tiles only (built-in basemap where none is cached); never touch the network.
     Cache,
     /// No basemap.
     Off,
@@ -45,7 +51,7 @@ pub struct MapSettings {
 impl Default for MapSettings {
     fn default() -> Self {
         Self {
-            mode: TileMode::Online,
+            mode: TileMode::Builtin,
             url_template: "https://tile.openstreetmap.org/{z}/{x}/{y}.png".into(),
             attribution: "© OpenStreetMap contributors".into(),
             headers: Vec::new(),
@@ -65,6 +71,14 @@ pub struct TileState {
     inner: RwLock<Inner>,
     cache_root: PathBuf,
     settings_file: PathBuf,
+    /// Unix time until which the tile server is considered unreachable (skip straight to fallback).
+    offline_until: AtomicU64,
+}
+
+const OFFLINE_BACKOFF_SECS: u64 = 60;
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 #[derive(Serialize)]
@@ -86,7 +100,8 @@ fn build_client(s: &MapSettings) -> Result<reqwest::Client, String> {
         // OSM's tile policy requires an identifying User-Agent.
         .user_agent(concat!("GraphicWalkerDesktop/", env!("CARGO_PKG_VERSION")))
         .default_headers(headers)
-        .timeout(Duration::from_secs(20))
+        .connect_timeout(Duration::from_secs(4))
+        .timeout(Duration::from_secs(12))
         .danger_accept_invalid_certs(!s.verify_ssl)
         .danger_accept_invalid_hostnames(!s.verify_ssl);
     if !s.proxy.trim().is_empty() {
@@ -105,7 +120,12 @@ impl TileState {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let client = build_client(&settings).unwrap_or_else(|_| build_client(&MapSettings::default()).expect("default tile client"));
-        Self { inner: RwLock::new(Inner { settings, client, revision: 1 }), cache_root, settings_file }
+        Self {
+            inner: RwLock::new(Inner { settings, client, revision: 1 }),
+            cache_root,
+            settings_file,
+            offline_until: AtomicU64::new(0),
+        }
     }
 
     fn view(&self) -> MapSettingsView {
@@ -133,6 +153,7 @@ pub fn save_map_settings(state: State<'_, TileState>, settings: MapSettings) -> 
         g.client = client;
         g.revision += 1;
     }
+    state.offline_until.store(0, Ordering::Relaxed);
     Ok(state.view())
 }
 
@@ -177,11 +198,18 @@ fn sniff_type(bytes: &[u8]) -> &'static str {
 }
 
 fn respond(status: StatusCode, body: Vec<u8>) -> Response<Vec<u8>> {
+    respond_from(status, body, "")
+}
+
+fn respond_from(status: StatusCode, body: Vec<u8>, source: &str) -> Response<Vec<u8>> {
     let ctype = if status.is_success() { sniff_type(&body) } else { "text/plain" };
+    // Fallback tiles must not be cached by the webview, so real tiles replace them once online.
+    let cache = if source == "fallback" { "no-store" } else { "max-age=86400" };
     Response::builder()
         .status(status)
         .header("Content-Type", ctype)
-        .header("Cache-Control", "max-age=86400")
+        .header("Cache-Control", cache)
+        .header("X-Tile-Source", source)
         .header("Access-Control-Allow-Origin", "*")
         .body(body)
         .unwrap()
@@ -189,6 +217,57 @@ fn respond(status: StatusCode, body: Vec<u8>) -> Response<Vec<u8>> {
 
 fn read_cached(path: &Path) -> Option<Vec<u8>> {
     fs::read(path).ok().filter(|b| !b.is_empty())
+}
+
+async fn builtin(z: u32, x: u32, y: u32, source: &str) -> Response<Vec<u8>> {
+    match tauri::async_runtime::spawn_blocking(move || basemap::render_tile(z, x, y)).await {
+        Ok(png) if !png.is_empty() => respond_from(StatusCode::OK, png, source),
+        _ => respond(StatusCode::INTERNAL_SERVER_ERROR, b"render failed".to_vec()),
+    }
+}
+
+fn tile_url(template: &str, z: u32, x: u32, y: u32) -> String {
+    let sub = ["a", "b", "c"][((x + y) % 3) as usize];
+    template
+        .replace("{s}", sub)
+        .replace("{z}", &z.to_string())
+        .replace("{x}", &x.to_string())
+        .replace("{y}", &y.to_string())
+        .replace("{r}", "")
+}
+
+/// Fetch one tile; Err carries a human-readable reason (status, TLS error, …).
+async fn fetch(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
+    let resp = client.get(url).send().await.map_err(|e| {
+        let mut msg = e.to_string();
+        let mut src = std::error::Error::source(&e);
+        while let Some(s) = src {
+            msg.push_str(&format!("\n  caused by: {s}"));
+            src = s.source();
+        }
+        msg
+    })?;
+    let status = resp.status();
+    let ctype = resp.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let body = String::from_utf8_lossy(&bytes[..bytes.len().min(300)]).to_string();
+        return Err(format!("HTTP {status} from {url}\n{body}"));
+    }
+    if sniff_type(&bytes) == "application/octet-stream" {
+        return Err(format!("{url} did not return an image (content-type {ctype:?}, {} bytes)", bytes.len()));
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Try the tile server with the (unsaved) settings from the dialog.
+#[tauri::command]
+pub async fn test_tiles(settings: MapSettings) -> Result<String, String> {
+    let client = build_client(&settings)?;
+    let url = tile_url(&settings.url_template, 5, 25, 16);
+    let started = std::time::Instant::now();
+    let bytes = fetch(&client, &url).await?;
+    Ok(format!("OK: {url} returned a {} image ({} bytes) in {} ms", sniff_type(&bytes), bytes.len(), started.elapsed().as_millis()))
 }
 
 pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> {
@@ -200,8 +279,10 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
         let g = state.inner.read().unwrap();
         (g.settings.clone(), g.client.clone())
     };
-    if settings.mode == TileMode::Off {
-        return respond(StatusCode::NOT_FOUND, Vec::new());
+    match settings.mode {
+        TileMode::Off => return respond(StatusCode::NOT_FOUND, Vec::new()),
+        TileMode::Builtin => return builtin(z, x, y, "builtin").await,
+        TileMode::Online | TileMode::Cache => {}
     }
     let file = state
         .cache_root
@@ -210,37 +291,29 @@ pub async fn handle(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u
         .join(x.to_string())
         .join(y.to_string());
     if let Some(bytes) = read_cached(&file) {
-        return respond(StatusCode::OK, bytes);
+        return respond_from(StatusCode::OK, bytes, "cache");
     }
     if settings.mode == TileMode::Cache {
-        return respond(StatusCode::NOT_FOUND, Vec::new());
+        return builtin(z, x, y, "fallback").await;
     }
-
-    let sub = ["a", "b", "c"][((x + y) % 3) as usize];
-    let url = settings
-        .url_template
-        .replace("{s}", sub)
-        .replace("{z}", &z.to_string())
-        .replace("{x}", &x.to_string())
-        .replace("{y}", &y.to_string())
-        .replace("{r}", "");
-    let resp = match client.get(&url).send().await {
-        Ok(r) => r,
-        Err(e) => return respond(StatusCode::BAD_GATEWAY, e.to_string().into_bytes()),
-    };
-    let status = resp.status();
-    let Ok(bytes) = resp.bytes().await else {
-        return respond(StatusCode::BAD_GATEWAY, Vec::new());
-    };
-    if !status.is_success() {
-        return respond(StatusCode::BAD_GATEWAY, format!("{url} returned {status}").into_bytes());
+    if now_secs() < state.offline_until.load(Ordering::Relaxed) {
+        return builtin(z, x, y, "fallback").await;
     }
-    if let Some(dir) = file.parent() {
-        if fs::create_dir_all(dir).is_ok() {
-            let _ = fs::write(&file, &bytes);
+    match fetch(&client, &tile_url(&settings.url_template, z, x, y)).await {
+        Ok(bytes) => {
+            if let Some(dir) = file.parent() {
+                if fs::create_dir_all(dir).is_ok() {
+                    let _ = fs::write(&file, &bytes);
+                }
+            }
+            respond_from(StatusCode::OK, bytes, "online")
+        }
+        // Offline, blocked or failing server: show the built-in basemap instead of a blank map.
+        Err(_) => {
+            state.offline_until.store(now_secs() + OFFLINE_BACKOFF_SECS, Ordering::Relaxed);
+            builtin(z, x, y, "fallback").await
         }
     }
-    respond(StatusCode::OK, bytes.to_vec())
 }
 
 #[cfg(test)]

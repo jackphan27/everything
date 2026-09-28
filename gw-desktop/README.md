@@ -5,7 +5,7 @@
 ## Why Tauri
 | Concern | Choice |
 |---|---|
-| File size | Uses the WebView2 runtime built into Windows 11 (no bundled Chromium). Portable `gw-desktop.exe` is ~4.9 MB, including the whole UI. |
+| File size | Uses the WebView2 runtime built into Windows 11 (no bundled Chromium). Portable `gw-desktop.exe` is ~6.3 MB (including a built-in offline world basemap), including the whole UI. |
 | Startup | App shell is a 248 KB chunk and paints in about 100 ms. Graphic Walker and Vega (4.3 MB) load lazily and are prefetched while the app is idle. |
 | Resources | One WebView2 process group, not Electron's bundled Chromium. CSV parsing and chart computation run in web workers. Release build uses LTO, `opt-level=s` and stripped symbols. |
 | Privacy | The CSP blocks all network access from the UI. The CDN URLs Graphic Walker hard-codes (leaflet CSS, logo, OSM tiles) are rewritten at build time. WebView2 background networking is disabled. Only the Rust backend makes network calls: AI requests (field names and types only, never rows) and basemap tiles (tile coordinates only). |
@@ -23,7 +23,9 @@ The model answers with a Graphic Walker "terse spec", which is converted into a 
 - **Inputs:** GeoJSON (`.geojson`/`.json`), shapefiles (a `.zip`, or select `.shp` + `.dbf` + `.prj` (+ `.cpg`) together; reprojected from the `.prj` to WGS84), and any table with latitude/longitude columns. Several files can be loaded at once.
 - **Map layers view:** one layer per dataset (polygons, lines, points), with show/hide, reorder (top of the list draws on top), zoom to layer, opacity, size and outline. Colour can be a single colour, a field (quantile classes for numbers, categories for text), or a value **joined from another table** by key, e.g. `mean(wa_poor_quality_rate)` from a CSV joined onto kecamatan polygons by `id_kec`. Hover shows the attributes. Features are drawn on canvas, one pane per layer.
 - **Explore view (Graphic Walker):** a polygon dataset can be used directly as a choropleth (Geo ID = `_fid`). Every loaded polygon file is also offered as boundary data for choropleths of other tables. Point and polygon rows get lon/lat (or centroid) columns for POI maps.
-- **Basemap:** tiles go through a local proxy in the backend (`tiles:` protocol) with an on-disk cache. Modes: *Online* (fetch and cache), *Offline* (cached tiles only, no network) or *None*. Choose any XYZ tile server (e.g. an internal one) with custom headers, an SSL-verify toggle and a proxy.
+- **Basemap (default: built-in, fully offline):** Natural Earth land, coastlines and country borders are embedded in the exe (1:50m worldwide, 1:10m around Southeast Asia at zoom ≥ 6) and drawn into tiles by the backend (`src-tauri/src/basemap.rs`). No internet needed. Both the Map layers view and Graphic Walker's maps use it.
+- **Optional online tiles:** any XYZ tile server (OSM or an internal one) with custom headers, SSL-verify toggle and proxy, cached on disk. If a tile can't be fetched, the built-in basemap is served instead, and the server is skipped for 60 s. *Cached online tiles only* never touches the network. Use *Test tile server* in the ⚙ dialog to see why a server fails (HTTP status, TLS error, …).
+- Regenerate the embedded data with `npm i --no-save world-atlas@2 topojson-client@3 && node scripts/build-basemap.mjs`. Natural Earth is public domain.
 
 ## Build
 - **CI:** every push runs `.github/workflows/gw-desktop-windows.yml` on `windows-latest`. Download the `gw-desktop-windows` artifact (portable exe and NSIS installer).

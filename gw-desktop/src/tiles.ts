@@ -1,7 +1,7 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { HeaderEntry } from './settings';
 
-export type TileMode = 'online' | 'cache' | 'off';
+export type TileMode = 'builtin' | 'online' | 'cache' | 'off';
 
 /** Mirrors `MapSettings` in src-tauri/src/tiles.rs. */
 export interface MapSettings {
@@ -21,6 +21,13 @@ export interface MapSettingsView {
 export const getMapSettings = () => invoke<MapSettingsView>('get_map_settings');
 export const saveMapSettings = (settings: MapSettings) => invoke<MapSettingsView>('save_map_settings', { settings });
 export const clearTileCache = () => invoke<void>('clear_tile_cache');
+export const testTiles = (settings: MapSettings) => invoke<string>('test_tiles', { settings });
+
+export const BUILTIN_ATTRIBUTION = 'Offline basemap: Natural Earth';
+
+export function attributionFor(view: MapSettingsView): string {
+  return view.settings.mode === 'builtin' ? BUILTIN_ATTRIBUTION : `${view.settings.attribution} (offline fallback: Natural Earth)`;
+}
 
 declare global {
   // Read by Graphic Walker's built-in maps (its hard-coded OSM URL is rewritten to this at build time).

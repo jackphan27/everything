@@ -1,4 +1,5 @@
 mod ai;
+mod basemap;
 mod tiles;
 
 use tauri::Manager;
@@ -23,6 +24,7 @@ pub fn run() {
             tiles::get_map_settings,
             tiles::save_map_settings,
             tiles::clear_tile_cache,
+            tiles::test_tiles,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Graphic Walker Desktop");

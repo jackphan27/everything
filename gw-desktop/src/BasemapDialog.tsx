@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { HeaderEntry } from './settings';
-import { clearTileCache, saveMapSettings, type MapSettings, type MapSettingsView } from './tiles';
+import { clearTileCache, saveMapSettings, testTiles, type MapSettings, type MapSettingsView } from './tiles';
 
 const PRESETS: { label: string; url: string; attribution: string }[] = [
   { label: 'OpenStreetMap', url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', attribution: '© OpenStreetMap contributors' },
@@ -32,13 +32,15 @@ export default function BasemapDialog({ initial, onClose }: Props) {
       <div className="modal" role="dialog" aria-label="Basemap settings">
         <h2>Basemap</h2>
         <p className="hint">
-          Tiles are fetched by the app's local backend and cached on disk, so areas you've viewed also work offline.
-          Only tile coordinates are sent to the tile server, never your data. For an internal tile server, enter its URL template.
+          The built-in map (land, coastlines, borders from Natural Earth) is stored inside the app and needs no internet.
+          Online tiles are fetched by the app's backend and cached on disk. If the server can't be reached, the built-in map
+          is shown instead. Only tile coordinates are sent to the tile server, never your data.
         </p>
         <label>Mode
           <select value={s.mode} onChange={(e) => set('mode', e.target.value as MapSettings['mode'])}>
-            <option value="online">Online — fetch missing tiles and cache them</option>
-            <option value="cache">Offline — cached tiles only, no network</option>
+            <option value="builtin">Built-in offline map — no internet needed</option>
+            <option value="online">Online tiles — fetch, cache, fall back to built-in</option>
+            <option value="cache">Cached online tiles only — no network</option>
             <option value="off">None — no basemap</option>
           </select>
         </label>
@@ -75,6 +77,9 @@ export default function BasemapDialog({ initial, onClose }: Props) {
 
         {status && <pre className={status.ok ? 'ok' : 'err'}>{status.text}</pre>}
         <div className="actions">
+          <button disabled={busy} onClick={() => run(async () => setStatus({ ok: true, text: await testTiles(s) }))}>
+            Test tile server
+          </button>
           <button disabled={busy} onClick={() => run(async () => { await clearTileCache(); setStatus({ ok: true, text: 'Tile cache cleared.' }); })}>
             Clear tile cache
           </button>
