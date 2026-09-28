@@ -1,6 +1,6 @@
 [package]
 name = "gw-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "Graphic Walker as a local-only Windows desktop app"
 edition = "2021"
 
