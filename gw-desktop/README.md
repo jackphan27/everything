@@ -28,9 +28,17 @@ The model answers with a Graphic Walker "terse spec", which is converted into a 
 - Regenerate the embedded data with `npm i --no-save world-atlas@2 topojson-client@3 && node scripts/build-basemap.mjs`. Natural Earth is public domain.
 
 ## Build
-- **CI:** every push runs `.github/workflows/gw-desktop-windows.yml` on `windows-latest`. Download the `gw-desktop-windows` artifact (portable exe and NSIS installer).
+- **CI:** every push runs `.github/workflows/gw-desktop.yml`: tests on Linux, then the Windows build on `windows-latest`. Download the `gw-desktop-windows` artifact (portable exe and NSIS installer).
 - **Locally on Windows:** `npm ci && npx tauri build` (needs Node 22 and Rust).
 - **Cross-compile from Linux:** `cargo install cargo-xwin && rustup target add x86_64-pc-windows-msvc && npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --no-bundle`
 - **Dev:** `npx tauri dev`
+
+## Tests
+| Command | What it checks |
+|---|---|
+| `npm run typecheck` | TypeScript, including the tests |
+| `npm test` | Unit tests (vitest): type inference, JSON/GeoJSON parsing, joins, AI reply handling |
+| `npm run test:e2e` | Builds the UI and runs Playwright against it with a mocked backend: CSV + AI charts, map layers, GeoJSON variants, offline basemap. Every test also fails on page errors or any request leaving the machine. |
+| `cd src-tauri && cargo test` | Rust: AI request building (against a local test server), tile fetching, basemap rendering. On Linux this needs `libwebkit2gtk-4.1-dev`. |
 
 Supported inputs: CSV / TSV / JSON / JSONL / GeoJSON / shapefile (drag-and-drop or *Add data…*).

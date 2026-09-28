@@ -20,7 +20,7 @@
   *Done when:* the CSV/AI, map-layers, GeoJSON-variants and basemap tests pass locally from a clean checkout.
 - [x] **T0.3.3** Add `vitest` with first unit tests (type inference, JSON parsing, join key normalisation). (2026-09-28, 5045523)
   *Done when:* `npm test` passes with at least 10 tests.
-- [ ] **T0.3.4** Rust tests in the crate (`tiles`, `basemap`, AI header building); `cargo test` works on Linux (feature-gate Windows-only bits if needed).
+- [x] **T0.3.4** Rust tests in the crate (`tiles`, `basemap`, AI header building); `cargo test` works on Linux (feature-gate Windows-only bits if needed). (2026-09-28, f5e4a2b)
   *Done when:* `cargo test` passes.
 - [ ] **T0.3.5** CI: run typecheck, unit, e2e and cargo tests plus the Windows build on every push; upload the installer artifact.
   *Done when:* the workflow is green on the branch and the artifact downloads.
