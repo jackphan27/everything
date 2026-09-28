@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Graphic Walker Desktop</title>
+    <style>
+      /* Inline critical CSS so the first frame paints before any JS loads. */
+      html, body, #root { height: 100%; margin: 0; }
+      body { font: 14px/1.4 "Segoe UI", system-ui, sans-serif; background: #fff; color: #111; }
+      @media (prefers-color-scheme: dark) { body { background: #0b0b0c; color: #eee; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
