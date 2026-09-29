@@ -1,6 +1,6 @@
 [package]
 name = "gw-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "Graphic Walker as a local-only Windows desktop app"
 edition = "2021"
 
@@ -20,6 +20,8 @@ serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 # API key lives in Windows Credential Manager, not in a plain-text file.
 keyring = { version = "3", features = ["windows-native"] }
+# Rasterises the built-in offline basemap (src/basemap.rs) into PNG tiles.
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd", "png-format"] }
 
 [profile.release]
 codegen-units = 1

@@ -73,3 +73,33 @@ button.link { border: none; background: none; color: var(--accent); padding: 2px
 .modal pre.ok { color: var(--ok); }
 .modal pre.err { color: var(--err); }
 .modal .actions { display: flex; gap: 8px; margin-top: 6px; }
+
+.tabs { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.tabs button { border: none; border-radius: 0; background: transparent; }
+.tabs button.on { background: var(--accent); color: var(--accent-text); }
+.banner .link { margin-left: 8px; }
+
+.mapview { display: flex; height: 100%; }
+.mapview .map { flex: 1; min-width: 0; background: var(--panel); }
+.layers {
+  width: 320px; flex: none; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px;
+  border-right: 1px solid var(--border); background: var(--bg);
+}
+.layers-head { display: flex; align-items: center; gap: 8px; }
+.layers label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 12px; }
+.layers select, .layers input:not([type=checkbox]):not([type=range]):not([type=color]) { width: 100%; min-width: 0; }
+.layers .pair { display: flex; gap: 6px; }
+.layers .hint { color: var(--muted); font-size: 12px; margin: 0; }
+.layers .hint.err { color: var(--err); }
+.layer { border: 1px solid var(--border); border-radius: 8px; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.layer-row { display: flex; align-items: center; gap: 4px; }
+.layer-name { flex: 1; min-width: 0; text-align: left; border: none; background: none; padding: 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.layer .badge { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.layer button.icon { padding: 1px 6px; font-size: 12px; }
+.layer-body { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px; }
+.layer .join { display: flex; flex-direction: column; gap: 6px; padding-left: 8px; border-left: 2px solid var(--border); }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; flex: none; border: 1px solid rgb(0 0 0 / .15); }
+.legend { list-style: none; margin: 0; padding: 0 4px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.map-tip { font: 12px/1.35 "Segoe UI", system-ui, sans-serif; max-width: 320px; }
+.map-tip-title { font-weight: 600; margin-bottom: 2px; }

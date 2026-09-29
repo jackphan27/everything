@@ -1,15 +1,30 @@
 import Papa from 'papaparse';
+import type { FeatureCollection } from 'geojson';
 import type { IMutField, IRow } from '@kanaries/graphic-walker';
+import { featuresToRows, isFeatureCollectionLike, LAT_NAMES, LON_NAMES, toFeatureCollection, type GeomKind } from './geo';
+
+export interface GeoData {
+  kind: GeomKind;
+  /** Features with `_fid` in their properties (matches the `_fid` column in rows). */
+  collection: FeatureCollection;
+  /** The original GeoJSON file, reused for Graphic Walker's boundary list instead of re-serialising. */
+  source?: Blob;
+}
 
 export interface Dataset {
+  id: string;
   name: string;
   rows: IRow[];
   fields: IMutField[];
+  geo?: GeoData;
 }
 
 const SAMPLE_SIZE = 2000;
-const DIMENSION_NAME = /(^|[_\s-])(id|code|zip|zipcode|postcode|phone|key)$/i;
+const DIMENSION_NAME = /(^|[_\s-])(id|code|kode|zip|zipcode|postcode|phone|key)$|^_fid$|^id_/i;
 const DATE_LIKE = /^\d{4}[-/]\d{1,2}([-/]\d{1,2})?([ T]\d{1,2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$|^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/;
+
+let nextId = 1;
+const newId = () => `ds${nextId++}`;
 
 /** Infer Graphic Walker field metadata from a sample of the rows. */
 export function inferFields(rows: IRow[]): IMutField[] {
@@ -28,6 +43,10 @@ export function inferFields(rows: IRow[]): IMutField[] {
     }
     const base = { fid: key, name: key };
     if (seen > 0 && dates === seen) return { ...base, semanticType: 'temporal', analyticType: 'dimension' };
+    // Coordinates are numeric but must group rows (one map point each), never be summed.
+    if (seen > 0 && numeric === seen && (LAT_NAMES.test(key) || LON_NAMES.test(key))) {
+      return { ...base, semanticType: 'quantitative', analyticType: 'dimension' };
+    }
     if (seen > 0 && numeric === seen && !DIMENSION_NAME.test(key)) {
       return { ...base, semanticType: 'quantitative', analyticType: 'measure' };
     }
@@ -49,23 +68,132 @@ function parseDelimited(file: File): Promise<IRow[]> {
   });
 }
 
-async function parseJson(file: File): Promise<IRow[]> {
-  const text = await file.text();
-  const trimmed = text.trimStart();
-  // JSON Lines / NDJSON
-  if (!trimmed.startsWith('[') && trimmed.includes('\n{')) {
-    return trimmed.split(/\r?\n/).filter(Boolean).map((l) => JSON.parse(l));
-  }
-  const json = JSON.parse(text);
-  if (Array.isArray(json)) return json;
-  // Common wrappers: { data: [...] } / { rows: [...] } / { records: [...] }
-  for (const k of ['data', 'rows', 'records', 'items']) if (Array.isArray(json?.[k])) return json[k];
-  throw new Error('JSON must be an array of objects (or { "data": [...] }).');
+function tableDataset(name: string, rows: IRow[]): Dataset {
+  if (!rows.length) throw new Error(`${name} contains no rows.`);
+  return { id: newId(), name, rows, fields: inferFields(rows) };
 }
 
-export async function loadFile(file: File): Promise<Dataset> {
-  const ext = file.name.split('.').pop()?.toLowerCase();
-  const rows = ext === 'json' || ext === 'jsonl' || ext === 'ndjson' ? await parseJson(file) : await parseDelimited(file);
-  if (!rows.length) throw new Error('The file contains no rows.');
-  return { name: file.name, rows, fields: inferFields(rows) };
+function geoDataset(name: string, fc: FeatureCollection, source?: Blob): Dataset {
+  const { rows, collection, kind } = featuresToRows(fc);
+  if (!rows.length) throw new Error(`${name} contains no features with geometry.`);
+  return { id: newId(), name, rows, fields: inferFields(rows), geo: { kind, collection, source } };
+}
+
+/** Decode text honouring a BOM, and detect BOM-less UTF-16 (common from Windows tools). */
+export function decodeText(buf: Uint8Array): string {
+  let enc = 'utf-8';
+  if (buf[0] === 0xff && buf[1] === 0xfe) enc = 'utf-16le';
+  else if (buf[0] === 0xfe && buf[1] === 0xff) enc = 'utf-16be';
+  else if (buf.length > 1 && buf[0] !== 0 && buf[1] === 0) enc = 'utf-16le';
+  else if (buf.length > 1 && buf[0] === 0 && buf[1] !== 0) enc = 'utf-16be';
+  // TextDecoder strips a leading BOM by default.
+  return new TextDecoder(enc).decode(buf);
+}
+
+async function readText(file: File): Promise<string> {
+  return decodeText(new Uint8Array(await file.arrayBuffer()));
+}
+
+function describeJsonError(text: string, err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  const pos = Number(/position (\d+)/.exec(msg)?.[1]);
+  if (!Number.isFinite(pos)) return new Error(`Invalid JSON: ${msg}`);
+  const snippet = text.slice(Math.max(0, pos - 40), pos + 40).replace(/\s+/g, ' ');
+  return new Error(`Invalid JSON: ${msg}. Near: …${snippet}…`);
+}
+
+async function parseJsonFile(file: File): Promise<Dataset> {
+  return parseJsonText(file.name, await readText(file), file);
+}
+
+/** Parse JSON, GeoJSON, JSON Lines or GeoJSONSeq text into a dataset. */
+export function parseJsonText(name: string, raw: string, source?: Blob): Dataset {
+  // GeoJSON Text Sequences (RFC 8142) separate records with the RS character.
+  const text = raw.replace(/\u001e/g, '\n');
+  let json: any;
+  try {
+    // Always try a single JSON document first: pretty-printed GeoJSON has many lines starting with "{".
+    json = JSON.parse(text);
+  } catch (err) {
+    // Fall back to JSON Lines / NDJSON / GeoJSONSeq: one JSON value per line.
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    let records: any[] | null = null;
+    if (lines.length > 1) {
+      try { records = lines.map((l) => JSON.parse(l)); } catch { records = null; }
+    }
+    if (!records) throw describeJsonError(text, err);
+    if (records.every((r) => r?.type === 'Feature')) {
+      return geoDataset(name, { type: 'FeatureCollection', features: records });
+    }
+    return tableDataset(name, records);
+  }
+  if (isFeatureCollectionLike(json)) return geoDataset(name, toFeatureCollection(json), source);
+  if (Array.isArray(json)) {
+    if (json.length && json.every((r) => r?.type === 'Feature')) {
+      return geoDataset(name, { type: 'FeatureCollection', features: json });
+    }
+    return tableDataset(name, json);
+  }
+  // Common wrappers: { data: [...] } / { rows: [...] } / { records: [...] }
+  for (const k of ['data', 'rows', 'records', 'items']) if (Array.isArray(json?.[k])) return tableDataset(name, json[k]);
+  throw new Error('JSON must be GeoJSON or an array of objects (or { "data": [...] }).');
+}
+
+async function parseShapefile(name: string, input: Parameters<typeof import('shpjs').default>[0]): Promise<Dataset[]> {
+  // shpjs (+ proj4 for reprojection from the .prj) is only loaded when a shapefile is opened.
+  const { default: shp } = await import('shpjs');
+  const result = await shp(input);
+  const layers = Array.isArray(result) ? result : [result];
+  return layers.map((fc) => geoDataset(layers.length > 1 && fc.fileName ? `${name} · ${fc.fileName}` : name, fc));
+}
+
+const ext = (f: File) => f.name.split('.').pop()?.toLowerCase() ?? '';
+const stem = (f: File) => f.name.replace(/\.[^.]+$/, '');
+
+/**
+ * Load everything the user dropped/picked. Shapefile parts (.shp/.dbf/.prj/.cpg/.shx) that
+ * share a base name are combined into one layer; a .zip may hold one or more shapefiles.
+ */
+export async function loadFiles(files: File[]): Promise<{ datasets: Dataset[]; errors: string[] }> {
+  const datasets: Dataset[] = [];
+  const errors: string[] = [];
+  const shpParts = new Map<string, Record<string, File>>();
+
+  const tasks: Promise<void>[] = [];
+  const run = (name: string, fn: () => Promise<Dataset | Dataset[]>) =>
+    tasks.push(fn().then(
+      (d) => { datasets.push(...(Array.isArray(d) ? d : [d])); },
+      (e) => { errors.push(`${name}: ${e instanceof Error ? e.message : String(e)}`); },
+    ));
+
+  for (const f of files) {
+    const e = ext(f);
+    if (['shp', 'dbf', 'prj', 'cpg', 'shx', 'sbn', 'sbx', 'xml'].includes(e)) {
+      const parts = shpParts.get(stem(f)) ?? {};
+      parts[e] = f;
+      shpParts.set(stem(f), parts);
+    } else if (e === 'zip') {
+      run(f.name, async () => parseShapefile(stem(f), await f.arrayBuffer()));
+    } else if (['json', 'geojson', 'jsonl', 'ndjson'].includes(e)) {
+      run(f.name, () => parseJsonFile(f));
+    } else {
+      run(f.name, async () => tableDataset(f.name, await parseDelimited(f)));
+    }
+  }
+  for (const [name, parts] of shpParts) {
+    if (!parts.shp) {
+      if (parts.dbf) run(`${name}.dbf`, () => Promise.reject(new Error('select the .shp file together with the .dbf (and .prj)')));
+      continue;
+    }
+    run(`${name}.shp`, async () =>
+      parseShapefile(name, {
+        shp: await parts.shp.arrayBuffer(),
+        dbf: parts.dbf && (await parts.dbf.arrayBuffer()),
+        prj: parts.prj && (await parts.prj.text()),
+        cpg: parts.cpg && (await parts.cpg.text()),
+      }),
+    );
+  }
+  await Promise.all(tasks);
+  return { datasets, errors };
 }
